@@ -7,6 +7,7 @@ enum {
   LSTRUCT_DOUBLE = 1300001,
   LSTRUCT_STRING = 1400001,
   LSTRUCT_OBJECT = 1500001,
+  LSTRUCT_STRUCT = 1600001,
 } ;
 
 
@@ -20,6 +21,7 @@ typedef struct {
   const char *member_name;
   ptrdiff_t offset;
   int data_type;
+  const char *type_name; /* if type is LSTRUCT_STRUCT */
 } lua_struct_member_t;
 
 
@@ -38,5 +40,8 @@ int lua_struct_register(lua_State *L, lua_struct_t type);
 int lua_struct_pushmember(lua_State *L, void *obj,
 			  const char *type_name,
 			  const char *member_name);
+int lua_struct_pushstruct(lua_State *L, void *obj,
+			  const char *type_name);
+
 
 #endif /* LUA_STRUCT_H */

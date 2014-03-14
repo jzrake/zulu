@@ -1,3 +1,4 @@
+#include <string.h>
 #include <lua.h>
 #include <lualib.h>
 #include <lauxlib.h>
@@ -37,6 +38,11 @@ int _struct_api_members(lua_State *L)
     lua_pop(L, 1);
   }
   lua_remove(L, -3);
+  lua_getglobal(L, "table");
+  lua_getfield(L, -1, "sort");
+  lua_pushvalue(L, -3);
+  lua_call(L, 1, 0);
+  lua_pop(L, 1);
   return 1;
 }
 
@@ -55,6 +61,7 @@ int _struct_api_type(lua_State *L)
 static int _struct_constructor(lua_State *L);
 static int _struct_mt_index(lua_State *L);
 static int _struct_mt_newindex(lua_State *L);
+static int _struct_mt_tostring(lua_State *L);
 static int _struct_mt_gc(lua_State *L);
 
 
@@ -76,6 +83,23 @@ int lua_struct_pushmember(lua_State *L, void *obj,
   return 1;
 }
 
+int lua_struct_pushstruct(lua_State *L, void *obj,
+			  const char *type_name)
+/* 
+ * caller is responsible for the lifetime of 'obj'
+ */
+{
+  lua_pushlightuserdata(L, obj);
+  luaL_getmetatable(L, type_name);
+  if (lua_isnil(L, -1)) {
+    lua_pop(L, 1);
+    luaL_error(L, "'%s' is not a registered struct");
+  }
+  else {
+    lua_setmetatable(L, -2);
+  }
+  return 0;
+}
 
 int lua_struct_register(lua_State *L, lua_struct_t type)
 {
@@ -134,6 +158,7 @@ int lua_struct_register(lua_State *L, lua_struct_t type)
     {"__index", _struct_mt_index},
     {"__newindex", _struct_mt_newindex},
     {"__gc", _struct_mt_gc},
+    {"__tostring", _struct_mt_tostring},
     {NULL, NULL}
   };
 
@@ -194,6 +219,9 @@ int _struct_mt_index(lua_State *L)
     case LSTRUCT_DOUBLE:
       lua_pushnumber(L, *((double *)(obj + memb->offset)));
       break;
+    case LSTRUCT_INT:
+      lua_pushnumber(L, *((int *)(obj + memb->offset)));
+      break;
     case LSTRUCT_STRING:
       lua_pushstring(L, *((const char **)(obj + memb->offset)));
       break;
@@ -201,6 +229,9 @@ int _struct_mt_index(lua_State *L)
       lua_rawgetp(L, iinstt, obj);
       lua_rawgeti(L, -1, memb->offset);
       lua_remove(L, -2);
+      break;
+    case LSTRUCT_STRUCT:
+      lua_struct_pushstruct(L, obj + memb->offset, memb->type_name);
       break;
     }
   }
@@ -218,7 +249,7 @@ int _struct_mt_index(lua_State *L)
 
 int _struct_mt_newindex(lua_State *L)
 {
-  void *obj = lua_touserdata(L, 1);
+  void *val, *obj = lua_touserdata(L, 1);
   const char *key = luaL_checkstring(L, 2);
   int top = lua_gettop(L);
 
@@ -230,6 +261,7 @@ int _struct_mt_newindex(lua_State *L)
   lua_getfield(L, imembt, key);             int ibkeyu = ++top;
   lua_getfield(L, imetht, key);             int itkeyu = ++top;
 
+  lua_struct_t *member_type; /* if member is also a struct */
   lua_struct_t *type = (lua_struct_t *) lua_touserdata(L, itypeu);
   lua_struct_member_t *memb = (lua_struct_member_t*) lua_touserdata(L, ibkeyu);
   lua_struct_method_t *meth = (lua_struct_method_t*) lua_touserdata(L, itkeyu);
@@ -238,6 +270,9 @@ int _struct_mt_newindex(lua_State *L)
     switch (memb->data_type) {
     case LSTRUCT_DOUBLE:
       *((double *)(obj + memb->offset)) = luaL_checknumber(L, 3);
+      break;
+    case LSTRUCT_INT:
+      *((int *)(obj + memb->offset)) = luaL_checkinteger(L, 3);
       break;
     case LSTRUCT_STRING:
       *((const char **)(obj + memb->offset)) = luaL_checkstring(L, 3);
@@ -249,6 +284,14 @@ int _struct_mt_newindex(lua_State *L)
       lua_rawseti(L, -2, memb->offset);
       lua_pop(L, 1);
       break;
+    case LSTRUCT_STRUCT:
+      luaL_getmetatable(L, memb->type_name);
+      lua_getfield(L, -1, "__type__");
+      member_type = (lua_struct_t *) lua_touserdata(L, -1);
+      lua_pop(L, 2);
+      val = luaL_checkudata(L, 3, memb->type_name);
+      memcpy(obj + memb->offset, val, member_type->alloc_size);
+      break;
     }
   }
   else if (meth) {
@@ -259,6 +302,18 @@ int _struct_mt_newindex(lua_State *L)
   }
   lua_settop(L, 3);
   return 0;
+}
+
+
+int _struct_mt_tostring(lua_State *L)
+{
+  void *obj = lua_touserdata(L, 1);
+  lua_getmetatable(L, 1); /* TOP: mt */
+  lua_getfield(L, -1, "__type__"); /* TOP: mt.__type__ userdata */
+  lua_struct_t *T = (lua_struct_t*) lua_touserdata(L, -1);
+  lua_pop(L, 2); /* TOP: fresh */
+  lua_pushfstring(L, "<struct %s instance at %p>", T->type_name, obj);
+  return 1;
 }
 
 
