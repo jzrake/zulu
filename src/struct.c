@@ -122,7 +122,7 @@ int lua_struct_register(lua_State *L, lua_struct_t type)
    * -------------------------------------------------- */
   lua_newtable(L); /* TOP: mt.__members__ */
   n = 0;
-  while (type.members[n].member_name) {
+  while (type.members && type.members[n].member_name) {
     lua_struct_member_t *M = (lua_struct_member_t*) /* TOP: member */
       lua_newuserdata(L, sizeof(lua_struct_member_t));
     *M = type.members[n];
@@ -137,7 +137,7 @@ int lua_struct_register(lua_State *L, lua_struct_t type)
    * -------------------------------------------------- */
   lua_newtable(L); /* TOP: mt.__methods__ */
   n = 0;
-  while (type.methods[n].method_name) {
+  while (type.methods && type.methods[n].method_name) {
     lua_struct_method_t *M = (lua_struct_method_t*) /* TOP: method */
       lua_newuserdata(L, sizeof(lua_struct_method_t));
     *M = type.methods[n];
@@ -199,7 +199,7 @@ int _struct_constructor(lua_State *L)
 int _struct_mt_index(lua_State *L)
 {
   void *obj = lua_touserdata(L, 1);
-  const char *key = luaL_checkstring(L, 2);
+  const char *key = lua_tostring(L, 2);
   int top = lua_gettop(L);
 
   lua_getmetatable(L, 1);                   int imetat = ++top;
@@ -250,7 +250,7 @@ int _struct_mt_index(lua_State *L)
 int _struct_mt_newindex(lua_State *L)
 {
   void *val, *obj = lua_touserdata(L, 1);
-  const char *key = luaL_checkstring(L, 2);
+  const char *key = lua_tostring(L, 2);
   int top = lua_gettop(L);
 
   lua_getmetatable(L, 1);                   int imetat = ++top;
