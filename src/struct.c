@@ -64,7 +64,21 @@ static int _struct_mt_newindex(lua_State *L);
 static int _struct_mt_tostring(lua_State *L);
 static int _struct_mt_gc(lua_State *L);
 
-
+lua_struct_t lua_struct_newtype(lua_State *L)
+{
+  lua_struct_t T = {
+    .type_name = NULL,
+    .alloc_size = 0,
+    .members = NULL,
+    .methods = NULL,
+    .__tostring = NULL,
+    .__len = NULL,
+    .__call = NULL,
+    .__init = NULL,
+    .__gc = NULL,
+  };
+  return T;
+}
 int lua_struct_pushmember(lua_State *L, void *obj,
 			  const char *type_name,
 			  const char *member_name)
@@ -99,6 +113,23 @@ int lua_struct_pushstruct(lua_State *L, void *obj,
     lua_setmetatable(L, -2);
   }
   return 0;
+}
+
+void *lua_struct_new(lua_State *L, const char *type_name)
+{
+  luaL_getmetatable(L, type_name); /* TOP: mt */
+  lua_getfield(L, -1, "__type__"); /* TOP: mt.__type__ */
+  lua_struct_t *T = (lua_struct_t*) lua_touserdata(L, -1);
+  lua_pop(L, 2); /* TOP: fresh */
+  void *obj = lua_newuserdata(L, T->alloc_size); /* TOP: new obj */
+  luaL_setmetatable(L, type_name);
+  luaL_getmetatable(L, type_name); /* TOP: mt */
+  lua_getfield(L, -1, "__instances__"); /* TOP: mt.__instances__ */
+  lua_newtable(L); /* TOP: mt.__instances__[obj] */
+  lua_rawsetp(L, -2, obj); /* TOP: mt.__instances__ */
+  lua_pop(L, 2); /* TOP: new obj */
+  if (T->__init) T->__init(L);
+  return obj;
 }
 
 int lua_struct_register(lua_State *L, lua_struct_t type)
@@ -180,18 +211,7 @@ int _struct_constructor(lua_State *L)
   lua_getupvalue(L, -1, 1); /* TOP: type name */
   const char *type_name = lua_tostring(L, -1);
   lua_pop(L, 1); /* TOP: fresh */
-  luaL_getmetatable(L, type_name); /* TOP: mt */
-  lua_getfield(L, -1, "__type__"); /* TOP: mt.__type__ */
-  lua_struct_t *T = (lua_struct_t*) lua_touserdata(L, -1);
-  lua_pop(L, 2); /* TOP: fresh */
-  void *obj = lua_newuserdata(L, T->alloc_size); /* TOP: new obj */
-  if (T->new) T->new(obj);
-  luaL_setmetatable(L, type_name);
-  luaL_getmetatable(L, type_name); /* TOP: mt */
-  lua_getfield(L, -1, "__instances__"); /* TOP: mt.__instances__ */
-  lua_newtable(L); /* TOP: mt.__instances__[obj] */
-  lua_rawsetp(L, -2, obj); /* TOP: mt.__instances__ */
-  lua_pop(L, 2); /* TOP: new obj */
+  lua_struct_new(L, type_name);
   return 1;
 }
 
@@ -312,8 +332,13 @@ int _struct_mt_tostring(lua_State *L)
   lua_getfield(L, -1, "__type__"); /* TOP: mt.__type__ userdata */
   lua_struct_t *T = (lua_struct_t*) lua_touserdata(L, -1);
   lua_pop(L, 2); /* TOP: fresh */
-  lua_pushfstring(L, "<struct %s instance at %p>", T->type_name, obj);
-  return 1;
+  if (T->__tostring) {
+    return T->__tostring(L);
+  }
+  else {
+    lua_pushfstring(L, "<struct %s instance at %p>", T->type_name, obj);
+    return 1;
+  }
 }
 
 
@@ -324,7 +349,7 @@ int _struct_mt_gc(lua_State *L)
   lua_getfield(L, -1, "__type__"); /* TOP: mt.__type__ userdata */
   lua_struct_t *T = (lua_struct_t*) lua_touserdata(L, -1);
   lua_pop(L, 2); /* TOP: fresh */
-  if (T->del) T->del(obj);
+  if (T->__gc) T->__gc(L);
   /* ---------------------------
    * mt.__instances__[obj] = nil
    * --------------------------- */

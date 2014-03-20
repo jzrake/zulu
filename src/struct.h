@@ -28,20 +28,25 @@ typedef struct {
 typedef struct {
   const char *type_name;
   size_t alloc_size;
-  int (*new)(void*);
-  int (*del)(void*);
   lua_struct_member_t *members;
   lua_struct_method_t *methods;
+  lua_CFunction __tostring;
+  lua_CFunction __len;
+  lua_CFunction __call;
+  lua_CFunction __init;
+  lua_CFunction __gc;
 } lua_struct_t;
 
 
 int luaopen_struct(lua_State *L);
+lua_struct_t lua_struct_newtype(lua_State *L);
 int lua_struct_register(lua_State *L, lua_struct_t type);
 int lua_struct_pushmember(lua_State *L, void *obj,
 			  const char *type_name,
 			  const char *member_name);
 int lua_struct_pushstruct(lua_State *L, void *obj,
 			  const char *type_name);
+void *lua_struct_new(lua_State *L, const char *type_name);
 
 
 #endif /* LUA_STRUCT_H */
