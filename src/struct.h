@@ -39,14 +39,11 @@ typedef struct {
 
 
 int luaopen_struct(lua_State *L);
-lua_struct_t lua_struct_newtype(lua_State *L);
 int lua_struct_register(lua_State *L, lua_struct_t type);
-int lua_struct_pushmember(lua_State *L, void *obj,
-			  const char *type_name,
-			  const char *member_name);
-int lua_struct_pushstruct(lua_State *L, void *obj,
-			  const char *type_name);
+int lua_struct_pushmember(lua_State *L, int n, const char *member_name);
+int lua_struct_pushstruct(lua_State *L, void *obj, const char *type_name);
 void *lua_struct_new(lua_State *L, const char *type_name);
-
+void *lua_struct_checkstruct(lua_State *L, int n, const char *type_name);
+lua_struct_t lua_struct_newtype(lua_State *L);
 
 #endif /* LUA_STRUCT_H */

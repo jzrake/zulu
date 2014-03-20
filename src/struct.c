@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 #include <lua.h>
 #include <lualib.h>
@@ -79,12 +80,12 @@ lua_struct_t lua_struct_newtype(lua_State *L)
   };
   return T;
 }
-int lua_struct_pushmember(lua_State *L, void *obj,
-			  const char *type_name,
-			  const char *member_name)
+
+int lua_struct_pushmember(lua_State *L, int n, const char *member_name)
 {
-  luaL_getmetatable(L, type_name); /* TOP: mt */
-  lua_getfield(L, -1, "__members__"); /* TOP: __members__ table */
+  void **obj = lua_touserdata(L, n);
+  lua_getmetatable(L, n); /* TOP: mt */
+  lua_getfield(L, -1, "__members__"); /* TOP: mt.__members__ */
   lua_getfield(L, -1, member_name); /* TOP: mt.__members__[member_name] */
   lua_struct_member_t *M = (lua_struct_member_t*) lua_touserdata(L, -1);
   lua_pop(L, 2); /* TOP: mt */
@@ -121,7 +122,8 @@ void *lua_struct_new(lua_State *L, const char *type_name)
   lua_getfield(L, -1, "__type__"); /* TOP: mt.__type__ */
   lua_struct_t *T = (lua_struct_t*) lua_touserdata(L, -1);
   lua_pop(L, 2); /* TOP: fresh */
-  void *obj = lua_newuserdata(L, T->alloc_size); /* TOP: new obj */
+  void **obj = lua_newuserdata(L, sizeof(void**)); /* TOP: new obj */
+  *obj = calloc(T->alloc_size, sizeof(char));
   luaL_setmetatable(L, type_name);
   luaL_getmetatable(L, type_name); /* TOP: mt */
   lua_getfield(L, -1, "__instances__"); /* TOP: mt.__instances__ */
@@ -129,7 +131,28 @@ void *lua_struct_new(lua_State *L, const char *type_name)
   lua_rawsetp(L, -2, obj); /* TOP: mt.__instances__ */
   lua_pop(L, 2); /* TOP: new obj */
   if (T->__init) T->__init(L);
-  return obj;
+  return *obj;
+}
+
+void *lua_struct_newref(lua_State *L, const char *type_name,
+			void *val, int parent)
+{
+  void **obj = lua_newuserdata(L, sizeof(void**)); /* TOP: new obj */
+  *obj = val;
+  luaL_setmetatable(L, type_name);
+  luaL_getmetatable(L, type_name); /* TOP: mt */
+  lua_getfield(L, -1, "__instances__"); /* TOP: mt.__instances__ */
+  lua_newtable(L); /* TOP: mt.__instances__[obj] */
+  lua_pushvalue(L, parent);
+  lua_setfield(L, -2, "__parent__");
+  lua_rawsetp(L, -2, obj); /* TOP: mt.__instances__ */
+  lua_pop(L, 2); /* TOP: new obj */
+  return *obj;
+}
+
+void *lua_struct_checkstruct(lua_State *L, int n, const char *type_name)
+{
+  return *((void**)luaL_checkudata(L, n, type_name));
 }
 
 int lua_struct_register(lua_State *L, lua_struct_t type)
@@ -218,7 +241,7 @@ int _struct_constructor(lua_State *L)
 
 int _struct_mt_index(lua_State *L)
 {
-  void *obj = lua_touserdata(L, 1);
+  void **obj = (void**) lua_touserdata(L, 1);
   const char *key = lua_tostring(L, 2);
   int top = lua_gettop(L);
 
@@ -237,13 +260,13 @@ int _struct_mt_index(lua_State *L)
   if (memb) {
     switch (memb->data_type) {
     case LSTRUCT_DOUBLE:
-      lua_pushnumber(L, *((double *)(obj + memb->offset)));
+      lua_pushnumber(L, *((double *)(*obj + memb->offset)));
       break;
     case LSTRUCT_INT:
-      lua_pushnumber(L, *((int *)(obj + memb->offset)));
+      lua_pushnumber(L, *((int *)(*obj + memb->offset)));
       break;
     case LSTRUCT_STRING:
-      lua_pushstring(L, *((const char **)(obj + memb->offset)));
+      lua_pushstring(L, *((const char **)(*obj + memb->offset)));
       break;
     case LSTRUCT_OBJECT:
       lua_rawgetp(L, iinstt, obj);
@@ -251,7 +274,7 @@ int _struct_mt_index(lua_State *L)
       lua_remove(L, -2);
       break;
     case LSTRUCT_STRUCT:
-      lua_struct_pushstruct(L, obj + memb->offset, memb->type_name);
+      lua_struct_newref(L, memb->type_name, *obj + memb->offset, 1);
       break;
     }
   }
@@ -269,7 +292,7 @@ int _struct_mt_index(lua_State *L)
 
 int _struct_mt_newindex(lua_State *L)
 {
-  void *val, *obj = lua_touserdata(L, 1);
+  void *val, **obj = lua_touserdata(L, 1);
   const char *key = lua_tostring(L, 2);
   int top = lua_gettop(L);
 
@@ -289,16 +312,16 @@ int _struct_mt_newindex(lua_State *L)
   if (memb) {
     switch (memb->data_type) {
     case LSTRUCT_DOUBLE:
-      *((double *)(obj + memb->offset)) = luaL_checknumber(L, 3);
+      *((double *)(*obj + memb->offset)) = luaL_checknumber(L, 3);
       break;
     case LSTRUCT_INT:
-      *((int *)(obj + memb->offset)) = luaL_checkinteger(L, 3);
+      *((int *)(*obj + memb->offset)) = luaL_checkinteger(L, 3);
       break;
     case LSTRUCT_STRING:
-      *((const char **)(obj + memb->offset)) = luaL_checkstring(L, 3);
+      *((const char **)(*obj + memb->offset)) = luaL_checkstring(L, 3);
       break;
     case LSTRUCT_OBJECT:
-      *((int *)(obj + memb->offset)) = lua_type(L, 3);
+      *((int *)(*obj + memb->offset)) = lua_type(L, 3);
       lua_rawgetp(L, iinstt, obj);
       lua_pushvalue(L, 3);
       lua_rawseti(L, -2, memb->offset);
@@ -309,8 +332,8 @@ int _struct_mt_newindex(lua_State *L)
       lua_getfield(L, -1, "__type__");
       member_type = (lua_struct_t *) lua_touserdata(L, -1);
       lua_pop(L, 2);
-      val = luaL_checkudata(L, 3, memb->type_name);
-      memcpy(obj + memb->offset, val, member_type->alloc_size);
+      val = lua_struct_checkstruct(L, 3, memb->type_name);
+      memcpy(*obj + memb->offset, val, member_type->alloc_size);
       break;
     }
   }
@@ -327,7 +350,7 @@ int _struct_mt_newindex(lua_State *L)
 
 int _struct_mt_tostring(lua_State *L)
 {
-  void *obj = lua_touserdata(L, 1);
+  void **obj = lua_touserdata(L, 1);
   lua_getmetatable(L, 1); /* TOP: mt */
   lua_getfield(L, -1, "__type__"); /* TOP: mt.__type__ userdata */
   lua_struct_t *T = (lua_struct_t*) lua_touserdata(L, -1);
@@ -336,7 +359,7 @@ int _struct_mt_tostring(lua_State *L)
     return T->__tostring(L);
   }
   else {
-    lua_pushfstring(L, "<struct %s instance at %p>", T->type_name, obj);
+    lua_pushfstring(L, "<struct %s instance at %p>", T->type_name, *obj);
     return 1;
   }
 }
@@ -344,7 +367,8 @@ int _struct_mt_tostring(lua_State *L)
 
 int _struct_mt_gc(lua_State *L)
 {
-  void *obj = lua_touserdata(L, 1);
+  int isowned;
+  void **obj = lua_touserdata(L, 1);
   lua_getmetatable(L, 1); /* TOP: mt */
   lua_getfield(L, -1, "__type__"); /* TOP: mt.__type__ userdata */
   lua_struct_t *T = (lua_struct_t*) lua_touserdata(L, -1);
@@ -355,8 +379,15 @@ int _struct_mt_gc(lua_State *L)
    * --------------------------- */
   lua_getmetatable(L, 1); /* TOP: mt */
   lua_getfield(L, -1, "__instances__"); /* TOP: mt.__instances__ */
+  lua_rawgetp(L, -1, obj); /* TOP: mt.__instances__[obj] */
+  lua_getfield(L, -1, "__parent__"); /* TOP: mt.__instances__[obj].__parent__ */
+  isowned = !lua_isnil(L, -1);
+  lua_pop(L, 2); /* TOP: mt.__instances__ */
   lua_pushnil(L); /* TOP: nil */
   lua_rawsetp(L, -2, obj); /* TOP: mt.__instances__ */
   lua_pop(L, 2);
+  if (!isowned) {
+    free(*obj);
+  }
   return 0;
 }
