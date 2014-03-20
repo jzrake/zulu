@@ -4,10 +4,11 @@
 #include <lualib.h>
 #include <lauxlib.h>
 #include "struct.h"
-
+#include "zulu.h"
 
 static int _struct_api_members(lua_State *L);
 static int _struct_api_type(lua_State *L);
+static int _struct_api_debug(lua_State *L);
 
 
 int luaopen_struct(lua_State *L)
@@ -16,6 +17,7 @@ int luaopen_struct(lua_State *L)
   luaL_Reg struct_module_funcs[] = {
     {"members", _struct_api_members},
     {"type", _struct_api_type},
+    {"debug", _struct_api_debug},
     {NULL, NULL}
   };
   luaL_setfuncs(L, struct_module_funcs, 0);
@@ -58,6 +60,16 @@ int _struct_api_type(lua_State *L)
   return 1;
 }
 
+int _struct_api_debug(lua_State *L)
+{
+  void **obj = lua_touserdata(L, 1);
+  lua_getmetatable(L, 1);
+  lua_getfield(L, -1, "__instances__");
+  lua_remove(L, -2);
+  lua_pushlightuserdata(L, obj);
+  return 2; /* instance_table, obj = struct.debug(A) */
+}
+
 
 static int _struct_constructor(lua_State *L);
 static int _struct_mt_index(lua_State *L);
@@ -98,49 +110,37 @@ int lua_struct_pushmember(lua_State *L, int n, const char *member_name)
   return 1;
 }
 
-int lua_struct_pushstruct(lua_State *L, void *obj,
-			  const char *type_name)
-/* 
- * caller is responsible for the lifetime of 'obj'
- */
+void *lua_struct_new(lua_State *L, const char *tname)
 {
-  lua_pushlightuserdata(L, obj);
-  luaL_getmetatable(L, type_name);
-  if (lua_isnil(L, -1)) {
-    lua_pop(L, 1);
-    luaL_error(L, "'%s' is not a registered struct");
-  }
-  else {
-    lua_setmetatable(L, -2);
-  }
-  return 0;
-}
-
-void *lua_struct_new(lua_State *L, const char *type_name)
-{
-  luaL_getmetatable(L, type_name); /* TOP: mt */
+  luaL_getmetatable(L, tname); /* TOP: mt */
   lua_getfield(L, -1, "__type__"); /* TOP: mt.__type__ */
   lua_struct_t *T = (lua_struct_t*) lua_touserdata(L, -1);
   lua_pop(L, 2); /* TOP: fresh */
-  void **obj = lua_newuserdata(L, sizeof(void**)); /* TOP: new obj */
+  void **obj = lua_newuserdata(L, sizeof(void**)); /* TOP: obj */
   *obj = calloc(T->alloc_size, sizeof(char));
-  luaL_setmetatable(L, type_name);
-  luaL_getmetatable(L, type_name); /* TOP: mt */
+  luaL_setmetatable(L, tname);
+  lua_getmetatable(L, -1); /* TOP: mt */
   lua_getfield(L, -1, "__instances__"); /* TOP: mt.__instances__ */
   lua_newtable(L); /* TOP: mt.__instances__[obj] */
   lua_rawsetp(L, -2, obj); /* TOP: mt.__instances__ */
-  lua_pop(L, 2); /* TOP: new obj */
-  if (T->__init) T->__init(L);
+  lua_pop(L, 2); /* TOP: obj */
+  lua_insert(L, 1); /* STACK: new obj, arg1, arg2, ... */
+  if (T->__init) {
+    lua_pushvalue(L, 1);
+    lua_insert(L, 1);
+    lua_pushcfunction(L, T->__init);
+    lua_insert(L, 2); /* STACK: obj, __init, obj, arg1, arg2, ... */
+    lua_call(L, lua_gettop(L)-2, 0); /* TOP: obj */
+  }
   return *obj;
 }
 
-void *lua_struct_newref(lua_State *L, const char *type_name,
-			void *val, int parent)
+void *lua_struct_newref(lua_State *L, const char *tname, void *val, int parent)
 {
   void **obj = lua_newuserdata(L, sizeof(void**)); /* TOP: new obj */
   *obj = val;
-  luaL_setmetatable(L, type_name);
-  luaL_getmetatable(L, type_name); /* TOP: mt */
+  luaL_setmetatable(L, tname);
+  luaL_getmetatable(L, tname); /* TOP: mt */
   lua_getfield(L, -1, "__instances__"); /* TOP: mt.__instances__ */
   lua_newtable(L); /* TOP: mt.__instances__[obj] */
   lua_pushvalue(L, parent);
@@ -150,9 +150,9 @@ void *lua_struct_newref(lua_State *L, const char *type_name,
   return *obj;
 }
 
-void *lua_struct_checkstruct(lua_State *L, int n, const char *type_name)
+void *lua_struct_checkstruct(lua_State *L, int n, const char *tname)
 {
-  return *((void**)luaL_checkudata(L, n, type_name));
+  return *((void**)luaL_checkudata(L, n, tname));
 }
 
 int lua_struct_register(lua_State *L, lua_struct_t type)
@@ -219,7 +219,7 @@ int lua_struct_register(lua_State *L, lua_struct_t type)
   luaL_setfuncs(L, struct_mt, 0);
   lua_pop(L, 1); /* TOP: fresh */
 
-  /* set the type name as an upvalue so that the it's part of the constructor
+  /* set the type name as an upvalue so that it's part of the constructor
      function's environment */
   lua_pushstring(L, type.type_name); /* TOP: type_name (upvalue index 1) */
   lua_pushcclosure(L, _struct_constructor, 1); /* TOP: constructor */
@@ -231,7 +231,8 @@ int lua_struct_register(lua_State *L, lua_struct_t type)
 
 int _struct_constructor(lua_State *L)
 {
-  lua_getupvalue(L, -1, 1); /* TOP: type name */
+  int top = lua_gettop(L);
+  lua_getupvalue(L, -1 - top, 1); /* TOP: type name */
   const char *type_name = lua_tostring(L, -1);
   lua_pop(L, 1); /* TOP: fresh */
   lua_struct_new(L, type_name);
